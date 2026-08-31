@@ -632,7 +632,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
             vmin=-ctx["field_vmax"],
             vmax=ctx["field_vmax"],
             origin="lower",
-            interpolation="kaiser",
+            interpolation="bicubic",
         )
         axis.text(
             0.0,
@@ -674,7 +674,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
         vmin=-ctx["diff_vmax"],
         vmax=ctx["diff_vmax"],
         origin="lower",
-        interpolation="kaiser",
+        interpolation="bicubic",
     )
     tx = LX + cw + 0.028
     fig.text(
@@ -1210,8 +1210,8 @@ def render_hero_animation(
         draw=_draw_hero_wide,
         stem="hero_hybrid_rollout",
         video_dpi=110,
-        gif_dpi=68,
-        gif_stride=6,
+        gif_dpi=92,
+        gif_stride=9,
         title="Locked seed-20000 hybrid closure rollout",
     )
 
