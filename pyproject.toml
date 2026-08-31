@@ -4,9 +4,7 @@ version = "0.1.0"
 description = "Cross-framework learned closure for differentiable 2D turbulence"
 license = "Apache-2.0"
 readme = "README.md"
-authors = [
-    { name = "julian-8897", email = "julianchan8897@gmail.com" }
-]
+authors = [{ name = "julian-8897" }]
 requires-python = ">=3.13"
 dependencies = [
     "exponax==0.2.0",
