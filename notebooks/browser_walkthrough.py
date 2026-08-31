@@ -10,7 +10,7 @@
 import marimo
 
 __generated_with = "0.24.0"
-app = marimo.App(width="medium", app_title="Differentiable hybrid closure")
+app = marimo.App(width="medium", app_title="Tesseract hybrid closure")
 
 
 @app.cell(hide_code=True)
@@ -74,14 +74,13 @@ def _(mo):
             max-width: 850px;
             margin: 1.1rem 0 0;
           }
-          .hero .tags { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1.35rem; }
-          .hero .tag {
-            background: rgba(255,255,255,0.11);
-            border: 1px solid rgba(255,255,255,0.22);
-            border-radius: 999px;
-            color: white;
-            font-size: 0.82rem;
-            padding: 0.35rem 0.7rem;
+          .hero .system-line {
+            border-top: 1px solid rgba(255,255,255,0.22);
+            color: #d9edf2;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.84rem;
+            margin-top: 1.25rem;
+            padding-top: 0.9rem;
           }
           .section-kicker {
             color: var(--blue);
@@ -133,6 +132,8 @@ def _(mo):
             .hero { padding: 1.6rem 1.3rem; }
             .flow-grid { grid-template-columns: 1fr; }
             .arrow { transform: rotate(90deg); text-align: center; }
+            [role="tablist"] { flex-wrap: wrap; height: auto; }
+            [role="tab"] { flex: 1 1 auto; }
           }
         </style>
         """
@@ -190,19 +191,16 @@ def _(mo):
     mo.Html(
         r"""
         <div class="hero">
-          <div class="eyebrow">Differentiable scientific machine learning</div>
-          <h1>Learning a closure through the dynamics it changes</h1>
+          <div class="eyebrow">Tesseract Hackathon 2026 · Track 3</div>
+          <h1>Training a PyTorch closure through a JAX turbulence solver</h1>
           <p>
-            A PyTorch CNN corrects an under-resolved JAX/Exponax spectral solver
-            for freely decaying two-dimensional turbulence. The model is trained
-            through complete solver rollouts, with explicit VJPs carrying gradients
-            across the framework boundary.
+            Two framework-native Tesseracts form one differentiable rollout:
+            Exponax advances the resolved vorticity, then a CNN predicts the
+            missing subgrid tendency. Explicit VJPs carry the rollout loss back
+            through both components and into every CNN parameter.
           </p>
-          <div class="tags">
-            <span class="tag">PyTorch closure</span>
-            <span class="tag">JAX spectral solver</span>
-            <span class="tag">A-posteriori training</span>
-            <span class="tag">Cross-framework reverse mode</span>
+          <div class="system-line">
+            JAX / Exponax solver Tesseract&nbsp;&nbsp;→&nbsp;&nbsp;PyTorch closure Tesseract
           </div>
         </div>
         """
@@ -217,11 +215,10 @@ def _(mo):
 
     ## What is missing on a coarse grid?
 
-    The 256² reference resolves vorticity modes that a 64² simulation cannot
-    represent. Sharp filtering gives the coarse truth, but evolving that field
-    with the coarse solver alone omits the net influence of discarded scales.
-    The learned closure supplies a scalar vorticity tendency that compensates for
-    this unresolved feedback.
+    Sharp filtering turns a 256² DNS trajectory into the 64² target seen by the
+    loss. Evolving the same resolved state with the coarse solver alone omits the
+    influence of discarded modes. The closure predicts that missing scalar
+    vorticity tendency after every solver step.
     """)
     return
 
@@ -231,23 +228,23 @@ def _(mo):
     mo.Html(
         r"""
         <div class="flow-grid">
-          <div class="flow-card orange">
-            <strong>Filtered DNS target</strong>
-            <span>256² reference trajectory sharply filtered to the 64² resolved modes.</span>
-          </div>
-          <div class="arrow">→</div>
           <div class="flow-card blue">
-            <strong>Mechanistic step</strong>
-            <span>JAX/Exponax advances coarse vorticity with float32 ETDRK2.</span>
+            <strong>Solver Tesseract · JAX</strong>
+            <span>Exponax advances coarse vorticity: ωₙ → ω* with float32 ETDRK2.</span>
           </div>
           <div class="arrow">→</div>
           <div class="flow-card teal">
-            <strong>Learned correction</strong>
-            <span>PyTorch CNN predicts qθ(ω*), then ωₙ₊₁ = ω* + Δt qθ.</span>
+            <strong>Closure Tesseract · PyTorch</strong>
+            <span>The CNN predicts the unresolved scalar tendency qθ(ω*).</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="flow-card orange">
+            <strong>Corrected rollout</strong>
+            <span>Compose ωₙ₊₁ = ω* + Δt qθ and compare the trajectory with filtered DNS.</span>
           </div>
         </div>
         <div class="reverse-strip">
-          rollout loss ⟶ closure VJP ⟶ solver VJP ⟶ all 822,977 CNN parameters
+          filtered DNS supervises rollout MSE · reverse mode: loss → closure VJP (θ, ω*) → solver VJP (ωₙ)
         </div>
         """
     )
@@ -264,13 +261,15 @@ def _(mo):
                 trains the CNN for its coupled effect on resolved dynamics, rather than
                 fitting an instantaneous tendency in isolation.
             """),
-            "How gradients cross": mo.md(r"""
-                **JAX owns the rollout tape.** `jax.custom_vjp` wraps NumPy-boundary
-                callbacks. PyTorch autograd returns the closure-input and parameter
-                cotangents; `jax.vjp` propagates the state cotangent through Exponax.
-                No finite-difference gradient or surrogate backward model is used.
+            "Gradient path": mo.md(r"""
+                **Each framework supplies its native reverse pass.** PyTorch autograd
+                returns closure-input and parameter cotangents; `jax.vjp` propagates
+                state cotangents through Exponax. `tesseract-jax` composes the served
+                endpoint VJPs across the two images. Full training uses the equivalent
+                callbacks in-process for throughput, with no finite differences or
+                surrogate backward model.
             """),
-            "What is held fixed?": mo.md(r"""
+            "Fixed setup": mo.md(r"""
                 **The comparison changes only the closure.** All trajectories use the
                 same initial condition, 64² grid, ETDRK2 solver, Δt = 0.002,
                 ν = 10⁻³ and filtered-DNS target. The browser data use validation seed
@@ -333,6 +332,7 @@ def _(mo):
             mo.hstack(
                 [method_choice, field_view, spectrum_choice],
                 align="end",
+                wrap=True,
                 gap=1.2,
             ),
         ],
@@ -387,6 +387,7 @@ def _(
             ),
         ],
         widths="equal",
+        wrap=True,
         gap=0.9,
     )
     return
@@ -467,7 +468,7 @@ def _(np, plt):
                 vmin=_vmin,
                 vmax=_vmax,
                 origin="lower",
-                interpolation="nearest",
+                interpolation="bicubic",
             )
             _axis.set_title(_title, fontsize=10.5, fontweight=600)
             _clean_axis(_axis)
@@ -620,9 +621,23 @@ def _(np, plt):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    explorer_view = mo.ui.tabs(
+        {
+            "Flow fields": "",
+            "Error through time": "",
+            "Resolved spectra": "",
+        },
+        value="Flow fields",
+    )
+    return (explorer_view,)
+
+
+@app.cell(hide_code=True)
 def _(
     baseline_prefix_mse,
     baseline_step_mse,
+    explorer_view,
     field_view,
     filtered_dns,
     frame_step,
@@ -636,46 +651,44 @@ def _(
     plot_spectrum,
     spectrum_choice,
 ):
-    field_figure = plot_field_explorer(
-        filtered_dns,
-        learned_closure,
-        no_closure,
-        frame_step.value,
-        method_choice.value,
-        field_view.value,
-    )
-    error_figure = plot_error_growth(
-        learned_step_mse,
-        baseline_step_mse,
-        learned_prefix_mse,
-        baseline_prefix_mse,
-        frame_step.value,
-    )
-    spectrum_figure = plot_spectrum(
-        filtered_dns,
-        learned_closure,
-        no_closure,
-        frame_step.value,
-        spectrum_choice.value,
-    )
-    return error_figure, field_figure, spectrum_figure
+    if explorer_view.value == "Flow fields":
+        active_figure = plot_field_explorer(
+            filtered_dns,
+            learned_closure,
+            no_closure,
+            frame_step.value,
+            method_choice.value,
+            field_view.value,
+        )
+    elif explorer_view.value == "Error through time":
+        active_figure = plot_error_growth(
+            learned_step_mse,
+            baseline_step_mse,
+            learned_prefix_mse,
+            baseline_prefix_mse,
+            frame_step.value,
+        )
+    else:
+        active_figure = plot_spectrum(
+            filtered_dns,
+            learned_closure,
+            no_closure,
+            frame_step.value,
+            spectrum_choice.value,
+        )
+    return (active_figure,)
 
 
 @app.cell(hide_code=True)
-def _(error_figure, field_figure, mo, spectrum_figure):
-    explorer_tabs = mo.ui.tabs(
-        {
-            "Flow fields": field_figure,
-            "Error through time": error_figure,
-            "Resolved spectra": spectrum_figure,
-        }
-    )
+def _(active_figure, explorer_view, mo):
     mo.vstack(
         [
-            explorer_tabs,
+            explorer_view,
+            active_figure,
             mo.md(
-                "*Move the rollout slider or change a selector above. Every panel "
-                "is recomputed in the browser from the precomputed validation fields.*"
+                "*Move the rollout slider or change a selector above. Metrics and "
+                "spectra use the original 64² arrays; bicubic interpolation only "
+                "smooths the displayed field images.*"
             ),
         ],
         gap=0.6,
@@ -718,20 +731,20 @@ def _(demo_metadata, mo):
 def _(mo):
     mo.vstack(
         [
-            mo.Html('<div class="section-kicker">Measured evidence</div>'),
-            mo.md("## The interactive case sits inside a broader evaluation"),
+            mo.Html('<div class="section-kicker">Held-out results</div>'),
+            mo.md("## Does the closure help beyond this trajectory?"),
             mo.hstack(
                 [
                     mo.stat(
                         value="71.7%",
-                        label="Lower 500-step test MSE",
-                        caption="relative to no closure",
+                        label="Gain over no closure",
+                        caption="lower 500-step test MSE",
                         direction="increase",
                     ),
                     mo.stat(
                         value="15.7%",
-                        label="Lower 500-step test MSE",
-                        caption="relative to matched a-priori CNN",
+                        label="Gain over a-priori CNN",
+                        caption="lower 500-step test MSE",
                         direction="increase",
                     ),
                     mo.stat(
@@ -740,12 +753,13 @@ def _(mo):
                         caption="all reported horizons",
                     ),
                     mo.stat(
-                        value="39.98%",
-                        label="Solver-transpose sensitivity",
-                        caption="served two-step gradient",
+                        value="822,977",
+                        label="Finite parameter gradients",
+                        caption="through two served images",
                     ),
                 ],
                 widths="equal",
+                wrap=True,
                 gap=0.9,
             ),
             mo.callout(
@@ -764,16 +778,12 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## What this walkthrough establishes
+    ## Reproduce the demonstration
 
-    - **The physical comparison is inspectable.** The same filtered-DNS target,
-      initial condition and numerical configuration are used throughout.
-    - **The benefit develops through time.** The field, prefix-error and spectral
-      views reveal different aspects of the coupled rollout.
-    - **The gradient path is part of the method.** JAX and PyTorch retain their
-      native implementations while explicit VJPs compose them into one objective.
+    The repository contains this live notebook, the released checkpoint, the two
+    Tesseract definitions, and the complete verification record.
 
-    [Repository, reproducible live notebook and full verification record](https://github.com/julian-8897/tesseract-hybrid-closure)
+    [Open the source and reproduction instructions](https://github.com/julian-8897/tesseract-hybrid-closure)
     """)
     return
 
