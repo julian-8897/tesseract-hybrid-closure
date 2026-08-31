@@ -47,8 +47,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.font_manager import FontProperties
+from matplotlib.font_manager import fontManager as _font_manager
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
+from matplotlib.patches import FancyBboxPatch, Rectangle
 
 from tesseract_hybrid_closure import submission_assets as assets
 from tesseract_hybrid_closure.configs import DNSConfig, SolverConfig
@@ -118,8 +121,6 @@ ANIMATION_GIF_STRIDE = 5
 ANIMATION_GIF_FPS = 15
 ANIMATION_VIDEO_STRIDE = 3
 ANIMATION_VIDEO_FPS = 24
-HERO_DISPLAY_QUANTILE = 0.995
-HERO_ZOOM_SIZE = 26
 REL_TOL_FIELD_MSE = 5.0e-3
 ABS_TOL_FIELD_MSE = 1.0e-7
 PARAMETER_COUNT = 822977
@@ -428,311 +429,734 @@ def _verify_seed20000_mse(
     return verified
 
 
-def _dns_temporal_zoom(
-    dns: np.ndarray,
-    *,
-    size: int = HERO_ZOOM_SIZE,
-) -> tuple[slice, slice]:
-    """Select the crop with greatest mean DNS change, independent of predictions."""
-    frames = np.stack(
-        [assets.frame_2d(dns, step) for step in range(dns.shape[0])],
-        axis=0,
-    )
-    change = np.mean((frames - frames[0]) ** 2, axis=0)
-    windows = np.lib.stride_tricks.sliding_window_view(change, (size, size))
-    scores = np.sum(windows, axis=(-2, -1))
-    top, left = np.unravel_index(np.argmax(scores), scores.shape)
-    return slice(int(top), int(top + size)), slice(int(left), int(left + size))
+# ---------------------------------------------------------------------------
+# Instrument-panel hero (light-on-white). The design shows the three fields as
+# a filmstrip, a signed "correction map" painted in the method colours (blue =
+# hybrid closer to DNS, vermillion = solver closer), and a spec card with the
+# headline rollout-MSE ratio and a live cumulative-MSE sparkline. Display colour
+# scales are robust percentiles and affect display only, never a reported number.
+# ---------------------------------------------------------------------------
+
+_INSTALLED_FONTS = {face.name for face in _font_manager.ttflist}
+_HERO_DISPLAY = FontProperties(
+    family="DIN Condensed" if "DIN Condensed" in _INSTALLED_FONTS else "DejaVu Sans",
+    weight="bold",
+)
 
 
-def render_hero_animation(
-    simulation: Mapping,
-    figures_dir: Path,
-) -> tuple[Path, Path, Path]:
-    """Render a smooth web hero, GIF fallback and representative poster."""
-    dns = np.asarray(simulation["dns_frames"])
-    rollouts = simulation["rollouts"]
-    aposteriori = np.asarray(rollouts["aposteriori-selected"])
-    apriori = np.asarray(rollouts["apriori-matched"])
-    no_closure = np.asarray(rollouts["no-closure"])
-    field_data = [dns, aposteriori, no_closure]
-    predictions = [aposteriori, apriori, no_closure]
-    errors = [np.abs(prediction - dns) for prediction in predictions]
+def _hero_mono(weight: str = "regular") -> FontProperties:
+    family = (
+        "JetBrains Mono" if "JetBrains Mono" in _INSTALLED_FONTS else "DejaVu Sans Mono"
+    )
+    return FontProperties(family=family, weight=weight)
 
-    # A few isolated extrema otherwise leave most of each diverging map nearly
-    # white. One pooled, fixed robust scale keeps all columns comparable while
-    # making the evolving structures legible. This affects display only.
-    field_vmax = float(
-        np.quantile(np.abs(np.concatenate(field_data, axis=0)), HERO_DISPLAY_QUANTILE)
-    )
-    error_vmax = float(
-        np.quantile(np.concatenate(errors, axis=0), HERO_DISPLAY_QUANTILE)
-    )
-    zoom_y, zoom_x = _dns_temporal_zoom(dns)
-    zoom_size = zoom_y.stop - zoom_y.start
-    magnification = dns.shape[-1] / zoom_size
 
-    figure = plt.figure(figsize=(11.4, 6.36), facecolor="#F7F8FA")
-    grid = figure.add_gridspec(
-        2,
-        4,
-        width_ratios=[1, 1, 1, 0.055],
-        left=0.035,
-        right=0.94,
-        bottom=0.16,
-        top=0.935,
-        wspace=0.075,
-        hspace=0.19,
+_HERO_THEME = {
+    "bg": "#F4F6F8",
+    "tile": "#FBFCFD",
+    "card": "#FFFFFF",
+    "ink": "#141A22",
+    "mut": "#5C6672",
+    "faint": "#98A2AE",
+    "rule": "#E2E7EC",
+    "blue": OKABE_ITO["blue"],
+    "diff_mid": "#FFFFFF",
+}
+_HERO_DIFF_ENDS = ("#E0662E", "#E9A87E", "#7FC4E8", OKABE_ITO["blue"])
+HERO_DISPLAY_QUANTILE = 0.985
+
+
+def _hero_diff_cmap(mid: str) -> LinearSegmentedColormap:
+    verm, verm_lo, blue_lo, blue = _HERO_DIFF_ENDS
+    return LinearSegmentedColormap.from_list(
+        "hybrid_diff", [verm, verm_lo, mid, blue_lo, blue], N=256
     )
-    top = [figure.add_subplot(grid[0, column]) for column in range(3)]
-    bottom = [figure.add_subplot(grid[1, column]) for column in range(3)]
-    field_labels = [
-        "Filtered DNS",
-        "Hybrid · JAX + PyTorch",
-        "Solver only",
+
+
+def _hero_context(simulation: Mapping, figW: float, figH: float) -> dict:
+    """Fields, robust display scales and the fixed full-rollout headline ratio."""
+    dns = np.asarray(simulation["dns_frames"])[:, 0]
+    apo = np.asarray(simulation["rollouts"]["aposteriori-selected"])[:, 0]
+    noc = np.asarray(simulation["rollouts"]["no-closure"])[:, 0]
+
+    def cumulative(pred: np.ndarray) -> np.ndarray:
+        squared = (pred[1:] - dns[1:]) ** 2
+        per_step = squared.mean(axis=(1, 2), dtype=np.float64)
+        return np.concatenate(
+            [np.zeros(1), np.cumsum(per_step) / np.arange(1, SIMULATION_MAX_STEPS + 1)]
+        )
+
+    mse_apo = cumulative(apo)
+    mse_noc = cumulative(noc)
+    diff = np.abs(noc - dns) - np.abs(apo - dns)  # >0 => hybrid closer to DNS
+    return {
+        "dns": dns,
+        "apo": apo,
+        "noc": noc,
+        "mse_apo": mse_apo,
+        "mse_noc": mse_noc,
+        "diff": diff,
+        "field_vmax": float(
+            np.quantile(np.abs(np.stack([dns, apo, noc])), HERO_DISPLAY_QUANTILE)
+        ),
+        "diff_vmax": float(np.quantile(np.abs(diff), HERO_DISPLAY_QUANTILE)),
+        "headline": float(
+            mse_noc[SIMULATION_MAX_STEPS] / mse_apo[SIMULATION_MAX_STEPS]
+        ),
+        "cmap": _hero_diff_cmap(_HERO_THEME["diff_mid"]),
+        "T": _HERO_THEME,
+        "figW": figW,
+        "figH": figH,
+    }
+
+
+def _hero_tile_axes(fig, rect, T):
+    axis = fig.add_axes(rect)
+    axis.set_xticks([])
+    axis.set_yticks([])
+    for spine in axis.spines.values():
+        spine.set_color(T["rule"])
+        spine.set_linewidth(1.0)
+    axis.set_facecolor(T["tile"])
+    return axis
+
+
+def _hero_multiplier(fig, number_text, x_gap, y, size, colour):
+    """Place a small '×' just after a rendered number, measured from its extent."""
+    box = number_text.get_window_extent(fig.canvas.get_renderer())
+    x_right = fig.transFigure.inverted().transform((box.x1, 0))[0]
+    fig.text(
+        x_right + x_gap,
+        y,
+        "×",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=size,
+        color=colour,
+        ha="left",
+        va="center",
+    )
+
+
+def _hero_sparkline(fig, rect, ctx, step, T):
+    axis = fig.add_axes(rect)
+    axis.set_facecolor("none")
+    full = np.arange(SIMULATION_MAX_STEPS + 1)
+    past = full[: step + 1]
+    axis.plot(full, ctx["mse_noc"], color=T["mut"], lw=1.2, alpha=0.32)
+    axis.plot(full, ctx["mse_apo"], color=T["blue"], lw=1.2, alpha=0.32)
+    axis.plot(past, ctx["mse_noc"][: step + 1], color=T["mut"], lw=1.9)
+    axis.plot(past, ctx["mse_apo"][: step + 1], color=T["blue"], lw=2.4)
+    axis.fill_between(past, ctx["mse_apo"][: step + 1], color=T["blue"], alpha=0.14)
+    axis.plot([step], [ctx["mse_noc"][step]], "o", ms=4.5, color=T["mut"])
+    axis.plot([step], [ctx["mse_apo"][step]], "o", ms=4.5, color=T["blue"])
+    axis.set_xlim(0, SIMULATION_MAX_STEPS)
+    axis.set_ylim(0, ctx["mse_noc"][SIMULATION_MAX_STEPS] * 1.12)
+    for side in ("top", "right", "left"):
+        axis.spines[side].set_visible(False)
+    axis.spines["bottom"].set_color(T["rule"])
+    axis.tick_params(colors=T["faint"], labelsize=7, length=2)
+    axis.set_xticks([0, 250, 500])
+    axis.set_yticks([])
+    for label in axis.get_xticklabels():
+        label.set_fontproperties(_hero_mono())
+
+
+def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
+    """Landscape instrument panel (README hero)."""
+    T = ctx["T"]
+    A = ctx["figH"] / ctx["figW"]
+    fig.set_facecolor(T["bg"])
+    mono, mono_m, mono_b = _hero_mono(), _hero_mono("medium"), _hero_mono("bold")
+
+    LX, LZONE_R = 0.035, 0.605
+    PX0, PX1 = 0.648, 0.965
+
+    fig.text(
+        LX,
+        0.952,
+        "2D DECAYING TURBULENCE",
+        fontproperties=mono_m,
+        fontsize=10.5,
+        color=T["mut"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        LX,
+        0.903,
+        "The hybrid recovers the fine-scale",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=19,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        LX,
+        0.866,
+        "turbulence a coarse solver smears away.",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=19,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        PX1,
+        0.952,
+        f"STEP {step:03d}/{SIMULATION_MAX_STEPS}   t={step * 0.002:.3f}",
+        fontproperties=mono_m,
+        fontsize=10,
+        color=T["mut"],
+        ha="right",
+        va="center",
+    )
+
+    gap = 0.013
+    fw = (LZONE_R - LX - 2 * gap) / 3
+    fh = fw / A
+    card_top = 0.815
+    fy = card_top - fh
+    labels = [
+        ("FILTERED DNS", T["ink"]),
+        ("HYBRID · JAX+PYTORCH", T["blue"]),
+        ("SOLVER ONLY", T["ink"]),
     ]
-    field_accents = ["#475569", OKABE_ITO["blue"], "#64748B"]
-    field_images = []
-    overview_images = []
-    for axis, data, label, accent in zip(
-        top, field_data, field_labels, field_accents, strict=True
-    ):
-        frame = assets.frame_2d(data, 0)
-        image = axis.imshow(
-            frame[zoom_y, zoom_x],
+    fields = [ctx["dns"], ctx["apo"], ctx["noc"]]
+    field_image = None
+    for i, (data, (label, colour)) in enumerate(zip(fields, labels, strict=True)):
+        axis = _hero_tile_axes(fig, [LX + i * (fw + gap), fy, fw, fh], T)
+        field_image = axis.imshow(
+            assets.frame_2d(data, step),
             cmap="RdBu_r",
-            vmin=-field_vmax,
-            vmax=field_vmax,
+            vmin=-ctx["field_vmax"],
+            vmax=ctx["field_vmax"],
             origin="lower",
             interpolation="bicubic",
-        )
-        field_images.append(image)
-        axis.set_title(
-            label,
-            fontsize=12,
-            fontweight="bold",
-            color="#18212F",
-            pad=8,
-        )
-        axis.set_xticks([])
-        axis.set_yticks([])
-        for spine in axis.spines.values():
-            spine.set_color("#CBD5E1")
-            spine.set_linewidth(0.8)
-        axis.plot(
-            [0, 1],
-            [1.035, 1.035],
-            transform=axis.transAxes,
-            color=accent,
-            linewidth=3.2,
-            solid_capstyle="round",
-            clip_on=False,
         )
         axis.text(
-            0.035,
-            0.96,
-            f"DNS-selected temporal detail  ×{magnification:.1f}",
+            0.0,
+            -0.055,
+            label,
             transform=axis.transAxes,
+            fontproperties=mono_m,
+            fontsize=8.2,
+            color=colour,
             ha="left",
             va="top",
-            fontsize=7.5,
-            color="#17212B",
-            fontweight="bold",
-            bbox={
-                "facecolor": "white",
-                "alpha": 0.78,
-                "edgecolor": "none",
-                "pad": 1.8,
-            },
         )
-        overview = axis.inset_axes([0.69, 0.035, 0.28, 0.28], zorder=5)
-        overview_image = overview.imshow(
-            frame,
+
+    cax = fig.add_axes([LZONE_R + 0.006, fy, 0.008, fh])
+    bar = fig.colorbar(field_image, cax=cax)
+    bar.outline.set_edgecolor(T["rule"])
+    bar.outline.set_linewidth(0.8)
+    bar.ax.tick_params(colors=T["mut"], labelsize=6.5, length=2)
+    for label in bar.ax.get_yticklabels():
+        label.set_fontproperties(mono)
+    fig.text(
+        LZONE_R + 0.01,
+        fy + fh + 0.016,
+        "ω",
+        fontproperties=mono_m,
+        fontsize=9.5,
+        color=T["mut"],
+        ha="center",
+        va="center",
+    )
+
+    ch = 0.325
+    cw = ch * A
+    cy = 0.07
+    axd = _hero_tile_axes(fig, [LX, cy, cw, ch], T)
+    axd.imshow(
+        ctx["diff"][step],
+        cmap=ctx["cmap"],
+        vmin=-ctx["diff_vmax"],
+        vmax=ctx["diff_vmax"],
+        origin="lower",
+        interpolation="bicubic",
+    )
+    tx = LX + cw + 0.028
+    fig.text(
+        tx,
+        cy + ch - 0.01,
+        "CORRECTION",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=25,
+        color=T["ink"],
+        ha="left",
+        va="top",
+    )
+    fig.text(
+        tx,
+        cy + ch - 0.075,
+        "MAP",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=25,
+        color=T["ink"],
+        ha="left",
+        va="top",
+    )
+    fig.text(
+        tx,
+        cy + ch - 0.135,
+        "per-cell vorticity error the",
+        fontproperties=mono,
+        fontsize=8.2,
+        color=T["mut"],
+        ha="left",
+        va="top",
+    )
+    fig.text(
+        tx,
+        cy + ch - 0.163,
+        "hybrid removes vs the solver",
+        fontproperties=mono,
+        fontsize=8.2,
+        color=T["mut"],
+        ha="left",
+        va="top",
+    )
+    for j, (swatch, text) in enumerate(
+        [
+            (OKABE_ITO["blue"], "hybrid closer to DNS"),
+            ("#E0662E", "solver closer to DNS"),
+        ]
+    ):
+        yy = cy + 0.055 - j * 0.038
+        fig.add_artist(
+            Rectangle(
+                (tx, yy),
+                0.016,
+                0.024,
+                transform=fig.transFigure,
+                facecolor=swatch,
+                edgecolor="none",
+            )
+        )
+        fig.text(
+            tx + 0.024,
+            yy + 0.012,
+            text,
+            fontproperties=mono,
+            fontsize=8,
+            color=T["mut"],
+            ha="left",
+            va="center",
+        )
+
+    card = FancyBboxPatch(
+        (PX0, cy),
+        PX1 - PX0,
+        card_top - cy,
+        transform=fig.transFigure,
+        boxstyle="round,pad=0,rounding_size=0.02",
+        mutation_aspect=ctx["figW"] / ctx["figH"],
+        facecolor=T["card"],
+        edgecolor=T["rule"],
+        linewidth=1.0,
+        zorder=0,
+    )
+    fig.add_artist(card)
+    ix0, ix1 = PX0 + 0.024, PX1 - 0.024
+    fig.text(
+        ix0,
+        0.768,
+        "RESULT",
+        fontproperties=mono_m,
+        fontsize=9.5,
+        color=T["blue"],
+        ha="left",
+        va="center",
+    )
+    number = fig.text(
+        ix0 - 0.004,
+        0.652,
+        f"{ctx['headline']:.2f}",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=58,
+        color=T["blue"],
+        ha="left",
+        va="center",
+    )
+    _hero_multiplier(fig, number, 0.012, 0.670, 22, T["blue"])
+    fig.text(
+        ix0,
+        0.565,
+        "LOWER ROLLOUT ERROR",
+        fontproperties=mono_m,
+        fontsize=9.5,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        ix0,
+        0.537,
+        "THAN THE SOLVER ALONE",
+        fontproperties=mono_m,
+        fontsize=9.5,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.add_artist(
+        Line2D(
+            [ix0, ix1],
+            [0.498, 0.498],
+            transform=fig.transFigure,
+            color=T["rule"],
+            lw=1.0,
+        )
+    )
+
+    def metric_row(y, tag, value, colour):
+        fig.text(
+            ix0,
+            y,
+            tag,
+            fontproperties=mono,
+            fontsize=9,
+            color=T["mut"],
+            ha="left",
+            va="center",
+        )
+        fig.text(
+            ix1,
+            y,
+            value,
+            fontproperties=mono_b,
+            fontsize=15,
+            color=colour,
+            ha="right",
+            va="center",
+        )
+
+    metric_row(0.455, "HYBRID  rollout MSE", f"{ctx['mse_apo'][step]:.3f}", T["blue"])
+    metric_row(0.410, "SOLVER  rollout MSE", f"{ctx['mse_noc'][step]:.3f}", T["mut"])
+    fig.text(
+        ix0,
+        0.340,
+        "CUMULATIVE MSE OVER THE ROLLOUT",
+        fontproperties=mono,
+        fontsize=7.8,
+        color=T["mut"],
+        ha="left",
+        va="center",
+    )
+    _hero_sparkline(fig, [ix0, 0.098, ix1 - ix0, 0.205], ctx, step, T)
+
+
+def _draw_hero_portrait(fig, step: int, ctx: dict) -> None:
+    """4:5 portrait instrument panel (LinkedIn)."""
+    T = ctx["T"]
+    A = ctx["figH"] / ctx["figW"]
+    fig.set_facecolor(T["bg"])
+    mono, mono_m, mono_b = _hero_mono(), _hero_mono("medium"), _hero_mono("bold")
+
+    LX, RX = 0.05, 0.95
+    fig.text(
+        LX,
+        0.966,
+        "2D DECAYING TURBULENCE",
+        fontproperties=mono_m,
+        fontsize=11,
+        color=T["mut"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        RX,
+        0.966,
+        f"STEP {step:03d}/{SIMULATION_MAX_STEPS}",
+        fontproperties=mono_m,
+        fontsize=10.5,
+        color=T["mut"],
+        ha="right",
+        va="center",
+    )
+    fig.text(
+        LX,
+        0.930,
+        "The hybrid recovers the fine-scale turbulence",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=23,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        LX,
+        0.902,
+        "a coarse solver smears away.",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=23,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+
+    # field filmstrip
+    gap = 0.02
+    fw = (RX - LX - 2 * gap) / 3
+    fh = fw / A
+    fy = 0.855 - fh
+    labels = [
+        ("FILTERED DNS", T["ink"]),
+        ("HYBRID · JAX+PYTORCH", T["blue"]),
+        ("SOLVER ONLY", T["ink"]),
+    ]
+    fields = [ctx["dns"], ctx["apo"], ctx["noc"]]
+    field_image = None
+    for i, (data, (label, colour)) in enumerate(zip(fields, labels, strict=True)):
+        axis = _hero_tile_axes(fig, [LX + i * (fw + gap), fy, fw, fh], T)
+        field_image = axis.imshow(
+            assets.frame_2d(data, step),
             cmap="RdBu_r",
-            vmin=-field_vmax,
-            vmax=field_vmax,
+            vmin=-ctx["field_vmax"],
+            vmax=ctx["field_vmax"],
             origin="lower",
             interpolation="bicubic",
         )
-        overview_images.append(overview_image)
-        overview.add_patch(
-            Rectangle(
-                (zoom_x.start - 0.5, zoom_y.start - 0.5),
-                zoom_size,
-                zoom_size,
-                fill=False,
-                edgecolor="#17212B",
-                linewidth=1.2,
-                linestyle=(0, (2, 2)),
-            )
-        )
-        overview.set_xticks([])
-        overview.set_yticks([])
-        for spine in overview.spines.values():
-            spine.set_color("white")
-            spine.set_linewidth(2.3)
-    field_colourbar = figure.colorbar(
-        field_images[0],
-        cax=figure.add_subplot(grid[0, 3]),
-    )
-    field_colourbar.set_label("vorticity  ω", fontsize=10)
-    field_colourbar.ax.tick_params(labelsize=8)
-
-    error_labels = [
-        "Hybrid − DNS",
-        "A-priori − DNS",
-        "Solver − DNS",
-    ]
-    error_colours = [OKABE_ITO["blue"], OKABE_ITO["vermillion"], "#475569"]
-    error_images = []
-    score_texts = []
-    for axis, data, label, colour in zip(
-        bottom, errors, error_labels, error_colours, strict=True
-    ):
-        image = axis.imshow(
-            assets.frame_2d(data, 0),
-            cmap="magma",
-            vmin=0,
-            vmax=error_vmax,
-            origin="lower",
-            interpolation="bilinear",
-        )
-        error_images.append(image)
-        axis.set_title(
+        axis.text(
+            0.0,
+            -0.05,
             label,
-            fontsize=11,
-            fontweight="bold",
-            color="#18212F",
-            pad=7,
+            transform=axis.transAxes,
+            fontproperties=mono_m,
+            fontsize=9.2,
+            color=colour,
+            ha="left",
+            va="top",
         )
-        axis.set_xticks([])
-        axis.set_yticks([])
-        for spine in axis.spines.values():
-            spine.set_color("#CBD5E1")
-            spine.set_linewidth(0.8)
-        score_texts.append(
-            axis.text(
-                0.5,
-                -0.085,
-                "rollout MSE  0.000",
-                transform=axis.transAxes,
-                ha="center",
-                va="top",
-                fontsize=9.5,
-                color=colour,
-                fontweight="bold",
-            )
-        )
-    error_colourbar = figure.colorbar(
-        error_images[0],
-        cax=figure.add_subplot(grid[1, 3]),
-    )
-    error_colourbar.set_label("absolute error  |Δω|", fontsize=10)
-    error_colourbar.ax.tick_params(labelsize=8)
 
-    counter = figure.text(
-        0.5,
-        0.072,
-        "step 000 / 500    ·    t = 0.000",
-        ha="center",
+    # horizontal vorticity colourbar under the strip
+    cbar_y = fy - 0.05
+    cax = fig.add_axes([0.35, cbar_y, 0.30, 0.011])
+    bar = fig.colorbar(field_image, cax=cax, orientation="horizontal")
+    bar.outline.set_edgecolor(T["rule"])
+    bar.outline.set_linewidth(0.8)
+    bar.ax.tick_params(colors=T["mut"], labelsize=7, length=2)
+    for label in bar.ax.get_xticklabels():
+        label.set_fontproperties(mono)
+    fig.text(
+        0.33,
+        cbar_y + 0.005,
+        "ω",
+        fontproperties=mono_m,
+        fontsize=10,
+        color=T["mut"],
+        ha="right",
         va="center",
-        fontsize=11,
-        color="#18212F",
-        fontweight="bold",
     )
-    progress_track = Line2D(
-        [0.32, 0.68],
-        [0.04, 0.04],
-        transform=figure.transFigure,
-        color="#D6DCE3",
-        linewidth=5,
-        solid_capstyle="round",
-    )
-    progress_line = Line2D(
-        [0.32, 0.32],
-        [0.04, 0.04],
-        transform=figure.transFigure,
-        color=OKABE_ITO["blue"],
-        linewidth=5,
-        solid_capstyle="round",
-    )
-    progress_dot = Line2D(
-        [0.32],
-        [0.04],
-        transform=figure.transFigure,
-        color=OKABE_ITO["blue"],
-        marker="o",
-        markersize=7,
-        linestyle="none",
-    )
-    figure.add_artist(progress_track)
-    figure.add_artist(progress_line)
-    figure.add_artist(progress_dot)
 
-    cumulative_mse = []
-    for prediction in predictions:
-        squared_error = (prediction[1:] - dns[1:]) ** 2
-        per_step_mse = np.mean(
-            squared_error,
-            axis=tuple(range(1, squared_error.ndim)),
-            dtype=np.float64,
-        )
-        cumulative_mse.append(
-            np.concatenate(
-                [
-                    np.zeros(1),
-                    np.cumsum(per_step_mse, dtype=np.float64)
-                    / np.arange(1, SIMULATION_MAX_STEPS + 1),
-                ]
+    # correction map (bottom-left) with title/caption/legend stacked above it
+    ch = 0.33
+    cw = ch * A
+    cy = 0.075
+    axd = _hero_tile_axes(fig, [LX, cy, cw, ch], T)
+    axd.imshow(
+        ctx["diff"][step],
+        cmap=ctx["cmap"],
+        vmin=-ctx["diff_vmax"],
+        vmax=ctx["diff_vmax"],
+        origin="lower",
+        interpolation="bicubic",
+    )
+    top_left = cy + ch
+    fig.text(
+        LX,
+        top_left + 0.135,
+        "CORRECTION MAP",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=22,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        LX,
+        top_left + 0.098,
+        "per-cell vorticity error the hybrid removes",
+        fontproperties=mono,
+        fontsize=8.6,
+        color=T["mut"],
+        ha="left",
+        va="center",
+    )
+    for j, (swatch, text) in enumerate(
+        [
+            (OKABE_ITO["blue"], "hybrid closer to DNS"),
+            ("#E0662E", "solver closer to DNS"),
+        ]
+    ):
+        yy = top_left + 0.06 - j * 0.03
+        fig.add_artist(
+            Rectangle(
+                (LX, yy - 0.009),
+                0.018,
+                0.018,
+                transform=fig.transFigure,
+                facecolor=swatch,
+                edgecolor="none",
             )
         )
+        fig.text(
+            LX + 0.028,
+            yy,
+            text,
+            fontproperties=mono,
+            fontsize=8.4,
+            color=T["mut"],
+            ha="left",
+            va="center",
+        )
+
+    # result card (bottom-right)
+    card_left, card_right = LX + cw + 0.03, RX + 0.02
+    card_bottom, card_top = cy - 0.02, 0.55
+    fig.add_artist(
+        FancyBboxPatch(
+            (card_left, card_bottom),
+            card_right - card_left,
+            card_top - card_bottom,
+            transform=fig.transFigure,
+            boxstyle="round,pad=0,rounding_size=0.02",
+            mutation_aspect=ctx["figW"] / ctx["figH"],
+            facecolor=T["card"],
+            edgecolor=T["rule"],
+            linewidth=1.0,
+            zorder=0,
+        )
+    )
+    ix0, ix1 = card_left + 0.026, card_right - 0.026
+    fig.text(
+        ix0,
+        0.515,
+        "RESULT",
+        fontproperties=mono_m,
+        fontsize=10,
+        color=T["blue"],
+        ha="left",
+        va="center",
+    )
+    number = fig.text(
+        ix0 - 0.004,
+        0.435,
+        f"{ctx['headline']:.2f}",
+        fontproperties=_HERO_DISPLAY,
+        fontsize=62,
+        color=T["blue"],
+        ha="left",
+        va="center",
+    )
+    _hero_multiplier(fig, number, 0.012, 0.457, 25, T["blue"])
+    fig.text(
+        ix0,
+        0.352,
+        "LOWER ROLLOUT ERROR THAN",
+        fontproperties=mono_m,
+        fontsize=10,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.text(
+        ix0,
+        0.324,
+        "THE SOLVER ALONE",
+        fontproperties=mono_m,
+        fontsize=10,
+        color=T["ink"],
+        ha="left",
+        va="center",
+    )
+    fig.add_artist(
+        Line2D(
+            [ix0, ix1],
+            [0.285, 0.285],
+            transform=fig.transFigure,
+            color=T["rule"],
+            lw=1.0,
+        )
+    )
+
+    def metric_row(y, tag, value, colour):
+        fig.text(
+            ix0,
+            y,
+            tag,
+            fontproperties=mono,
+            fontsize=9.5,
+            color=T["mut"],
+            ha="left",
+            va="center",
+        )
+        fig.text(
+            ix1,
+            y,
+            value,
+            fontproperties=mono_b,
+            fontsize=15.5,
+            color=colour,
+            ha="right",
+            va="center",
+        )
+
+    metric_row(0.246, "HYBRID  rollout MSE", f"{ctx['mse_apo'][step]:.3f}", T["blue"])
+    metric_row(0.204, "SOLVER  rollout MSE", f"{ctx['mse_noc'][step]:.3f}", T["mut"])
+    fig.text(
+        ix0,
+        0.152,
+        "CUMULATIVE MSE OVER THE ROLLOUT",
+        fontproperties=mono,
+        fontsize=7.8,
+        color=T["mut"],
+        ha="left",
+        va="center",
+    )
+    _hero_sparkline(fig, [ix0, 0.078, ix1 - ix0, 0.062], ctx, step, T)
+
+
+def _render_hero(
+    simulation: Mapping,
+    figures_dir: Path,
+    *,
+    figsize: tuple[float, float],
+    draw,
+    stem: str,
+    video_dpi: int,
+    gif_dpi: int,
+    gif_stride: int,
+    title: str,
+) -> tuple[Path, Path, Path]:
+    """Render one instrument-panel layout to smooth MP4, GIF and poster."""
+    ctx = _hero_context(simulation, figsize[0], figsize[1])
+    figure = plt.figure(figsize=figsize, facecolor=_HERO_THEME["bg"])
 
     def update(step: int) -> list:
-        for image, overview_image, data in zip(
-            field_images, overview_images, field_data, strict=True
-        ):
-            frame = assets.frame_2d(data, step)
-            image.set_data(frame[zoom_y, zoom_x])
-            overview_image.set_data(frame)
-        for image, data in zip(error_images, errors, strict=True):
-            image.set_data(assets.frame_2d(data, step))
-        for text, by_step in zip(score_texts, cumulative_mse, strict=True):
-            text.set_text(f"rollout MSE  {by_step[step]:.3f}")
-        counter.set_text(
-            f"step {step:03d} / {SIMULATION_MAX_STEPS}    ·    t = {step * 0.002:.3f}"
-        )
-        progress_x = 0.32 + 0.36 * step / SIMULATION_MAX_STEPS
-        progress_line.set_xdata([0.32, progress_x])
-        progress_dot.set_xdata([progress_x])
-        return [
-            *field_images,
-            *overview_images,
-            *error_images,
-            *score_texts,
-            counter,
-            progress_line,
-            progress_dot,
-        ]
+        figure.clf()
+        draw(figure, step, ctx)
+        return []
 
-    video_steps = (
-        [0] * 11
-        + list(range(0, SIMULATION_MAX_STEPS, ANIMATION_VIDEO_STRIDE))
-        + [SIMULATION_MAX_STEPS] * 19
-    )
-    video_path = figures_dir / "hero_hybrid_rollout.mp4"
     if not FFMpegWriter.isAvailable():
         raise RuntimeError(
             "ffmpeg is required to render the smooth MP4 hero; install it or "
             "run with --no-simulation"
         )
-    video = FuncAnimation(figure, update, frames=video_steps, blit=False)
-    video.save(
+    video_steps = (
+        [0] * 8
+        + list(range(0, SIMULATION_MAX_STEPS, ANIMATION_VIDEO_STRIDE))
+        + [SIMULATION_MAX_STEPS] * 18
+    )
+    video_path = figures_dir / f"{stem}.mp4"
+    FuncAnimation(figure, update, frames=video_steps, blit=False).save(
         video_path,
         writer=FFMpegWriter(
             fps=ANIMATION_VIDEO_FPS,
             codec="libx264",
             bitrate=-1,
-            metadata={"title": "Locked seed-20000 hybrid closure rollout"},
+            metadata={"title": title},
             extra_args=[
                 "-preset",
                 "slow",
@@ -746,30 +1170,62 @@ def render_hero_animation(
                 "creation_time=1970-01-01T00:00:00Z",
             ],
         ),
-        dpi=100,
+        dpi=video_dpi,
     )
 
     gif_steps = (
-        [0] * 8
-        + list(range(ANIMATION_GIF_STRIDE, SIMULATION_MAX_STEPS, ANIMATION_GIF_STRIDE))
-        + [SIMULATION_MAX_STEPS] * 12
+        [0] * 6
+        + list(range(0, SIMULATION_MAX_STEPS, gif_stride))
+        + [SIMULATION_MAX_STEPS] * 10
     )
-    gif_path = figures_dir / "hero_hybrid_rollout.gif"
-    gif = FuncAnimation(figure, update, frames=gif_steps, blit=False)
-    # The GIF is a fallback for renderers without video; a smaller canvas
-    # keeps it responsive in README embeds while the MP4 stays full-res.
-    gif.save(gif_path, writer=PillowWriter(fps=ANIMATION_GIF_FPS), dpi=72)
+    gif_path = figures_dir / f"{stem}.gif"
+    FuncAnimation(figure, update, frames=gif_steps, blit=False).save(
+        gif_path, writer=PillowWriter(fps=ANIMATION_GIF_FPS), dpi=gif_dpi
+    )
 
     update(SIMULATION_MAX_STEPS)
-    poster_path = figures_dir / "hero_hybrid_rollout_poster.png"
+    poster_path = figures_dir / f"{stem}_poster.png"
     figure.savefig(
-        poster_path,
-        dpi=100,
-        facecolor=figure.get_facecolor(),
-        metadata={},
+        poster_path, dpi=video_dpi, facecolor=figure.get_facecolor(), metadata={}
     )
     plt.close(figure)
     return video_path, gif_path, poster_path
+
+
+def render_hero_animation(
+    simulation: Mapping,
+    figures_dir: Path,
+) -> tuple[Path, Path, Path]:
+    """Render the landscape README hero (smooth MP4, GIF fallback, poster)."""
+    return _render_hero(
+        simulation,
+        figures_dir,
+        figsize=(12.8, 7.0),
+        draw=_draw_hero_wide,
+        stem="hero_hybrid_rollout",
+        video_dpi=110,
+        gif_dpi=68,
+        gif_stride=6,
+        title="Locked seed-20000 hybrid closure rollout",
+    )
+
+
+def render_hero_linkedin(
+    simulation: Mapping,
+    figures_dir: Path,
+) -> tuple[Path, Path, Path]:
+    """Render the 4:5 portrait LinkedIn hero (smooth MP4, GIF, poster)."""
+    return _render_hero(
+        simulation,
+        figures_dir,
+        figsize=(8.64, 10.8),
+        draw=_draw_hero_portrait,
+        stem="hero_linkedin",
+        video_dpi=125,
+        gif_dpi=66,
+        gif_stride=6,
+        title="Locked seed-20000 hybrid closure rollout (LinkedIn)",
+    )
 
 
 def render_local_error_reduction(simulation: Mapping, figures_dir: Path) -> Path:
@@ -987,6 +1443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         hero_paths = render_hero_animation(simulation, figures_dir)
+        hero_paths = hero_paths + render_hero_linkedin(simulation, figures_dir)
         print("      wrote " + ", ".join(str(path) for path in hero_paths))
         local_error_base = render_local_error_reduction(simulation, figures_dir)
         _write_caption(
