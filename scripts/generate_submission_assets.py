@@ -1046,10 +1046,14 @@ def _draw_hero_portrait(fig, step: int, ctx: dict) -> None:
         ha="left",
         va="center",
     )
+    # Live cumulative-MSE ratio, as in the wide hero: advances with the rollout,
+    # equals the two metric rows below, converges to ctx["headline"] at step 500.
+    apo_mse = ctx["mse_apo"][step]
+    live_ratio = ctx["mse_noc"][step] / apo_mse if apo_mse > 0 else ctx["headline"]
     number = fig.text(
         ix0 - 0.004,
         0.435,
-        f"{ctx['headline']:.2f}",
+        f"{live_ratio:.2f}",
         fontproperties=_HERO_DISPLAY,
         fontsize=62,
         color=T["blue"],
@@ -1228,8 +1232,8 @@ def render_hero_linkedin(
         draw=_draw_hero_portrait,
         stem="hero_linkedin",
         video_dpi=125,
-        gif_dpi=66,
-        gif_stride=6,
+        gif_dpi=92,
+        gif_stride=9,
         title="Locked seed-20000 hybrid closure rollout (LinkedIn)",
     )
 
