@@ -632,7 +632,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
             vmin=-ctx["field_vmax"],
             vmax=ctx["field_vmax"],
             origin="lower",
-            interpolation="nearest",
+            interpolation="kaiser",
         )
         axis.text(
             0.0,
@@ -674,7 +674,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
         vmin=-ctx["diff_vmax"],
         vmax=ctx["diff_vmax"],
         origin="lower",
-        interpolation="nearest",
+        interpolation="kaiser",
     )
     tx = LX + cw + 0.028
     fig.text(
