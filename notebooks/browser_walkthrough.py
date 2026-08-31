@@ -749,7 +749,7 @@ def _(mo):
                     ),
                     mo.stat(
                         value="32 / 32",
-                        label="Paired test wins",
+                        label="Wins vs matched a-priori CNN",
                         caption="all reported horizons",
                     ),
                     mo.stat(
