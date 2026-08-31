@@ -1,0 +1,13 @@
+name: coarse_solver
+version: 0.2.0
+description: "Differentiable Exponax ETDRK2 coarse solver for 2D vorticity"
+build_config:
+  python_version: "3.13"
+  package_data:
+    - ["../../src/tesseract_hybrid_closure", "/tesseract/tesseract_hybrid_closure"]
+    - ["../../LICENSE", "/tesseract/licenses/LICENSE"]
+    - ["../../NOTICE", "/tesseract/licenses/NOTICE"]
+    - ["../../ATTRIBUTION.md", "/tesseract/licenses/ATTRIBUTION.md"]
+metadata:
+  framework: jax
+  system: decaying-2d-turbulence

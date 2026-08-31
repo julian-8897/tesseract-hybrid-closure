@@ -1,0 +1,79 @@
+{
+  "arrays": {
+    "filtered_dns": {
+      "dtype": "float32",
+      "path": "filtered_dns_seed10000.npy",
+      "sha256": "9f301cb2cecbfb712d6d81bd54afb69f785ad3837436e4118ee45e949c14515c",
+      "shape": [
+        30,
+        1,
+        64,
+        64
+      ]
+    },
+    "learned_closure": {
+      "dtype": "float32",
+      "path": "learned_closure_seed10000.npy",
+      "sha256": "b20f01de3594b4304fa996156623d093a56aba606c58d0aabdbe603f0a02aca9",
+      "shape": [
+        30,
+        1,
+        64,
+        64
+      ]
+    },
+    "no_closure": {
+      "dtype": "float32",
+      "path": "no_closure_seed10000.npy",
+      "sha256": "7e82cd80da6eabfad9cce7c2b1d1278beab07dc88dcb998114ad1882cd9747e4",
+      "shape": [
+        30,
+        1,
+        64,
+        64
+      ]
+    }
+  },
+  "checkpoint": "runs/w2-calibrated-a20-dt002-100x3/stage-unroll-30-updates-700.pkl",
+  "checkpoint_sha256": "8ed5b36fac902e61fcd3a1749f727f6928c93f3b7303e5781f5f66ce86c2e9b7",
+  "completed_updates": 700,
+  "dns_config": {
+    "diffusivity": 0.001,
+    "domain_extent": 6.283185307179586,
+    "dt": 0.002,
+    "num_points": 256,
+    "order": 2,
+    "vorticity_amplitude": 20.0
+  },
+  "evidence": {
+    "selected_32_seed_validation_mse": {
+      "mean_vorticity_mse": 0.008100025996100157,
+      "source": "docs/results/final-metrics.json"
+    },
+    "served_demo": {
+      "closure_vjp_calls": 2,
+      "gradient_finite": true,
+      "gradient_size": 822977,
+      "solver_transpose_sensitivity": 0.3998377025127411,
+      "solver_vjp_calls": 1,
+      "source": "docs/results/container-optimiser-demo.json"
+    }
+  },
+  "note": "Presentation data for the browser-only walkthrough. Generated from one validation seed; not a new reported evaluation result.",
+  "num_steps": 30,
+  "rollout_mse": {
+    "learned_closure": 0.009800677187740803,
+    "no_closure": 0.11229359358549118
+  },
+  "schema": "marimo-browser-walkthrough-data",
+  "seed": 10000,
+  "solver_config": {
+    "diffusivity": 0.001,
+    "domain_extent": 6.283185307179586,
+    "dt": 0.002,
+    "num_points": 64,
+    "order": 2
+  },
+  "split": "validation",
+  "version": 2
+}

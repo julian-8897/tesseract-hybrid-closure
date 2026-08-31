@@ -1,0 +1,13 @@
+name: scalar_closure
+version: 0.2.0
+description: "PyTorch scalar SGS-tendency closure with flattened-parameter VJP"
+build_config:
+  python_version: "3.13"
+  package_data:
+    - ["../../src/tesseract_hybrid_closure", "/tesseract/tesseract_hybrid_closure"]
+    - ["../../LICENSE", "/tesseract/licenses/LICENSE"]
+    - ["../../NOTICE", "/tesseract/licenses/NOTICE"]
+    - ["../../ATTRIBUTION.md", "/tesseract/licenses/ATTRIBUTION.md"]
+metadata:
+  framework: pytorch
+  closure: scalar-vorticity-tendency

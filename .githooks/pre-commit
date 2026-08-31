@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-commit gate: run the repository's local verification before committing.
+# Install once per checkout with `make hooks` (sets core.hooksPath).
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-commit: running make verify (compile, lint, unit tests, gradient and rollout smokes)..."
+make verify

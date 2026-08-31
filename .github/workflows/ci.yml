@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (Python 3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install pinned dependencies
+        run: uv sync --locked
+
+      - name: Compile
+        run: uv run python -m compileall -q src tests tesseracts notebooks
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run marimo check notebooks/*.py
+
+      - name: Unit tests (no smoke, no container)
+        run: uv run python -m pytest tests -q -m "not gradient_smoke and not rollout_smoke and not container"
+
+      - name: Cross-framework gradient smoke
+        run: |
+          uv run python -m pytest tests/test_gradient_smoke.py -q -m gradient_smoke
+          uv run hybrid-closure gradient-smoke --output artifacts/gradient-smoke.json
+
+      - name: Rollout gradient and curriculum smoke
+        run: uv run python -m pytest tests/test_rollout_smoke.py -q -m rollout_smoke

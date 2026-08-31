@@ -1,0 +1,11 @@
+Differentiable hybrid closure for two-dimensional turbulence
+
+Copyright 2026 julian-8897
+Copyright 2025 Pasteur Labs
+
+This product includes software developed at Pasteur Labs: the repository
+structure, local Tesseract loader, flattened-parameter transport, and VJP
+endpoint pattern were adapted from an earlier Apache-2.0 project, as recorded
+in ATTRIBUTION.md.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).

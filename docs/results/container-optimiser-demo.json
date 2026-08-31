@@ -1,0 +1,38 @@
+{
+  "loss_before": 0.0008655003039166331,
+  "loss_after": 0.0008654959965497255,
+  "gradient_norm": 6.609246838706895e-07,
+  "gradient_size": 822977,
+  "gradient_finite": true,
+  "parameter_update_norm": 0.004628660622984171,
+  "loss_improved": true,
+  "accepted_updates": 1,
+  "seed": 0,
+  "dt": 0.002,
+  "learning_rate": 0.0001,
+  "vorticity_amplitude": 20.0,
+  "use_images": true,
+  "unroll_steps": 2,
+  "objective": "two-step composed rollout vorticity-MSE against filtered DNS targets, mean over both rollout states",
+  "solver_apply_calls": 6,
+  "solver_vjp_calls": 1,
+  "closure_apply_calls": 6,
+  "closure_vjp_calls": 2,
+  "solver_vjp_min_cotangent_norm": 0.0005812497111037374,
+  "closure_vjp_min_cotangent_norm": 1.1624994158410118e-06,
+  "solver_vjp_input_paths": [
+    [
+      "omega"
+    ]
+  ],
+  "closure_vjp_input_paths": [
+    [
+      "omega",
+      "params_flat"
+    ],
+    [
+      "params_flat"
+    ]
+  ],
+  "solver_transpose_sensitivity": 0.3998377025127411
+}
