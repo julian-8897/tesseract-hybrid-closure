@@ -632,7 +632,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
             vmin=-ctx["field_vmax"],
             vmax=ctx["field_vmax"],
             origin="lower",
-            interpolation="bicubic",
+            interpolation="nearest",
         )
         axis.text(
             0.0,
@@ -674,7 +674,7 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
         vmin=-ctx["diff_vmax"],
         vmax=ctx["diff_vmax"],
         origin="lower",
-        interpolation="bicubic",
+        interpolation="nearest",
     )
     tx = LX + cw + 0.028
     fig.text(
@@ -769,10 +769,16 @@ def _draw_hero_wide(fig, step: int, ctx: dict) -> None:
         ha="left",
         va="center",
     )
+    # Live cumulative-MSE ratio so the headline advances with the rollout and
+    # equals the two metric rows below it (solver / hybrid). It converges to the
+    # fixed full-rollout figure ctx["headline"] at step 500, which the poster
+    # renders; the step-0 fallback avoids a 0/0 before any error accrues.
+    apo_mse = ctx["mse_apo"][step]
+    live_ratio = ctx["mse_noc"][step] / apo_mse if apo_mse > 0 else ctx["headline"]
     number = fig.text(
         ix0 - 0.004,
         0.652,
-        f"{ctx['headline']:.2f}",
+        f"{live_ratio:.2f}",
         fontproperties=_HERO_DISPLAY,
         fontsize=58,
         color=T["blue"],
